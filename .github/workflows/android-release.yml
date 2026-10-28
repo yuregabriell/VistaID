@@ -33,25 +33,25 @@ jobs:
       - name: Prepare release asset
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/VistaID-v0.1.0-local-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/VistaID-v0.2.0-local-debug.apk
           cd dist
-          sha256sum VistaID-v0.1.0-local-debug.apk > SHA256SUMS.txt
+          sha256sum VistaID-v0.2.0-local-debug.apk > SHA256SUMS.txt
       - name: APK build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VistaID-v0.1.0-local-APK
+          name: VistaID-v0.2.0-local-APK
           path: dist/
           retention-days: 30
       - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=v0.1.0-local
-          NOTES='Vista ID local preview: on-device profiles, 13-character identity, password authentication and encrypted JSON backups. Not an online account; no device syncing or integration with other Vista apps. Debug-signed preview.'
+          TAG=v0.2.0-local
+          NOTES='Vista ID local preview v0.2: adds explicit user-approved local profile linking for Vista apps, plus local profiles and encrypted JSON backups. Not cloud identity; no cross-device syncing. Debug-signed preview.'
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/VistaID-v0.1.0-local-debug.apk dist/SHA256SUMS.txt --clobber
+            gh release upload "$TAG" dist/VistaID-v0.2.0-local-debug.apk dist/SHA256SUMS.txt --clobber
           else
-            gh release create "$TAG" dist/VistaID-v0.1.0-local-debug.apk dist/SHA256SUMS.txt \
+            gh release create "$TAG" dist/VistaID-v0.2.0-local-debug.apk dist/SHA256SUMS.txt \
               --target "${GITHUB_SHA}" --title 'Vista ID v0.1.0 - local preview' \
               --notes "$NOTES" --prerelease
           fi
