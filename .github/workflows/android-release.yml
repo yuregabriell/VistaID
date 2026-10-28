@@ -18,7 +18,9 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Android platform
-        run: |\n          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"\n          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: |
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
       - name: Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
