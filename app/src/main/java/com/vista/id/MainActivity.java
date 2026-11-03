@@ -140,6 +140,7 @@ public final class MainActivity extends Activity {
         return b;
     }
     private void render() {
+        lastCodeStep = -1;
         codeText = null; codeTimer = null; vsStatus = null;
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true); scroll.setBackgroundColor(BG);
@@ -210,6 +211,10 @@ public final class MainActivity extends Activity {
         space(overview, 11);
         overview.addView(label("Sessão protegida pelo Supabase Auth. A tua palavra-passe nunca é guardada pelo Vista ID.", 13, MUTED, false));
         space(overview, 16);
+        button(overview, "Editar nome apresentado", false, this::editDisplayName);
+        space(overview, 9);
+        button(overview, "Alterar palavra-passe", false, this::editPassword);
+        space(overview, 9);
         button(overview, "Atualizar perfil", false, this::refreshProfile);
         space(root, 16);
 
@@ -221,6 +226,8 @@ public final class MainActivity extends Activity {
         vsStatus = label("A verificar ligação...", 13, MUTED, false);
         connected.addView(vsStatus); space(connected, 16);
         button(connected, "Gerir conta e ver dados do VS", true, this::showVsData);
+        space(connected, 9);
+        button(connected, "Limpar dados sincronizados do VS", false, this::confirmResetVs);
         space(root, 16);
 
         LinearLayout authenticator = card(root);
@@ -264,6 +271,41 @@ public final class MainActivity extends Activity {
                 runOnUiThread(() -> { if (vsStatus == current) current.setText("Não foi possível consultar o VS"); });
             }
         }, "VistaID-VSStatus").start();
+    }
+    private void editDisplayName() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setText(profile == null ? username : profile.optString("display_name", username));
+        new AlertDialog.Builder(this).setTitle("Nome apresentado")
+            .setMessage("O teu @nome de utilizador continua igual.")
+            .setView(input).setNegativeButton("Cancelar", null)
+            .setPositiveButton("Guardar", (d, which) ->
+                execute(() -> gateway.action("profile_update",
+                    new JSONObject().put("display_name", input.getText().toString()), true),
+                    result -> refreshProfile())).show();
+    }
+    private void editPassword() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        input.setHint("Nova palavra-passe (10+ caracteres)");
+        new AlertDialog.Builder(this).setTitle("Alterar palavra-passe")
+            .setView(input).setNegativeButton("Cancelar", null)
+            .setPositiveButton("Guardar", (d, which) ->
+                execute(() -> {
+                    gateway.changePassword(input.getText().toString());
+                    return new JSONObject();
+                }, result -> toast("Palavra-passe atualizada."))).show();
+    }
+    private void confirmResetVs() {
+        new AlertDialog.Builder(this).setTitle("Eliminar dados do VistaStream?")
+            .setMessage("Esta ação elimina favoritos, progresso e preferências sincronizadas na nuvem. Não apaga os dados locais que ainda não foram sincronizados. Não pode ser desfeita.")
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Eliminar dados", (d, which) -> execute(
+                () -> gateway.action("vs_reset",
+                    new JSONObject().put("confirm", "DELETE_MY_VS_DATA"), true),
+                result -> { toast("Dados do VistaStream limpos."); refreshVsStatus(); }))
+            .show();
     }
     private void showVsData() {
         execute(() -> gateway.vistaStreamData(), data -> {
