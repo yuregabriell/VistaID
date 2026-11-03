@@ -1,0 +1,2 @@
+[functions.vista-auth]
+verify_jwt = false # Function checks JWT for code_now and pair_approve; other actions are rate limited.

@@ -5,12 +5,13 @@ import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -20,285 +21,370 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-import org.json.JSONObject;
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.io.OutputStream;
+import com.google.zxing.integration.android.IntentIntegrator;
+import com.google.zxing.integration.android.IntentResult;
+import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import org.json.JSONObject;
 
-/** Vista ID local-first preview. Does not simulate a cloud account. */
+/** Vista ID 1.0: real Supabase account, VS management and approved QR sign-in. */
 public final class MainActivity extends Activity {
-    private static final int BG = Color.rgb(10, 14, 25);
-    private static final int SURFACE = Color.rgb(23, 29, 46);
-    private static final int SURFACE_LIGHT = Color.rgb(31, 39, 60);
-    private static final int TEXT = Color.rgb(246, 247, 255);
-    private static final int MUTED = Color.rgb(159, 170, 194);
-    private static final int ACCENT = Color.rgb(135, 143, 255);
-    private static final int CREATE_BACKUP = 501;
-    private static final int RESTORE_BACKUP = 502;
-    private VistaIdStore store;
-    private String sessionId;
-    private boolean creating = true;
+    private static final int BG = Color.rgb(9, 13, 26);
+    private static final int PANEL = Color.rgb(21, 28, 47);
+    private static final int FIELD = Color.rgb(29, 37, 59);
+    private static final int TEXT = Color.rgb(242, 245, 255);
+    private static final int MUTED = Color.rgb(159, 172, 196);
+    private static final int ACCENT = Color.rgb(145, 128, 255);
+    private static final int SUCCESS = Color.rgb(94, 218, 175);
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private SupabaseGateway gateway;
+    private boolean creating = false;
     private boolean working = false;
-    private String pendingPassword;
-    private String pendingId;
+    private boolean authenticated = false;
+    private boolean codeLoading = false;
+    private long lastCodeStep = -1;
+    private String username = "";
+    private JSONObject profile;
+    private TextView codeText, codeTimer, vsStatus;
+
+    private final Runnable tick = new Runnable() {
+        @Override public void run() {
+            if (gateway != null && authenticated && codeText != null) {
+                long seconds = System.currentTimeMillis() / 1000;
+                if (codeTimer != null) codeTimer.setText("Renova em " + (30 - (seconds % 30)) + " s");
+                long step = seconds / 30;
+                if (step != lastCodeStep && !codeLoading) {
+                    codeLoading = true;
+                    codeText.setText("A sincronizar...");
+                    new Thread(() -> {
+                        try {
+                            JSONObject current = gateway.action("code_now", new JSONObject(), true);
+                            String value = current.getString("code");
+                            runOnUiThread(() -> {
+                                codeLoading = false;
+                                lastCodeStep = current.optLong("expires_at", (System.currentTimeMillis() / 1000 + 30)) / 30 - 1;
+                                if (codeText != null) codeText.setText(value);
+                            });
+                        } catch (Exception e) {
+                            runOnUiThread(() -> {
+                                codeLoading = false;
+                                lastCodeStep = System.currentTimeMillis() / 30000;
+                                if (codeText != null) codeText.setText("Indisponível offline");
+                            });
+                        }
+                    }, "VistaID-Code").start();
+                }
+            }
+            handler.postDelayed(this, 1000);
+        }
+    };
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        gateway = new SupabaseGateway(this);
+        authenticated = gateway.signedIn();
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
-        try {
-            store = new VistaIdStore(this);
-            sessionId = getPreferences(MODE_PRIVATE).getString("session", null);
-            if (sessionId != null && store.find(sessionId) == null) sessionId = null;
-        } catch (Exception ex) {
-            new AlertDialog.Builder(this).setTitle("Erro no armazenamento local")
-                .setMessage("Os dados não foram eliminados. " + ex.getMessage())
-                .setPositiveButton("Fechar", (dialog, which) -> finish()).show();
-            return;
-        }
         render();
+        if (authenticated) refreshProfile();
     }
-    private int dp(float n) { return (int) (n * getResources().getDisplayMetrics().density + 0.5f); }
-    private GradientDrawable shape(int color, int radius) {
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(color); d.setCornerRadius(dp(radius)); return d;
+    @Override protected void onResume() { super.onResume(); handler.removeCallbacks(tick); handler.post(tick); }
+    @Override protected void onPause() { handler.removeCallbacks(tick); super.onPause(); }
+
+    private int dp(int n) { return (int) (n * getResources().getDisplayMetrics().density + 0.5f); }
+    private GradientDrawable shape(int background, int radius) {
+        GradientDrawable d = new GradientDrawable(); d.setColor(background);
+        d.setCornerRadius(dp(radius)); return d;
     }
-    private GradientDrawable outline() {
-        GradientDrawable d = shape(SURFACE, 18);
-        d.setStroke(dp(1), Color.rgb(45, 54, 77)); return d;
-    }
-    private LinearLayout vertical() {
+    private LinearLayout column() {
         LinearLayout l = new LinearLayout(this);
         l.setOrientation(LinearLayout.VERTICAL); return l;
     }
-    private void gap(LinearLayout root, int h) {
-        View v = new View(this); root.addView(v, new LinearLayout.LayoutParams(1, dp(h)));
+    private void space(LinearLayout root, int h) {
+        root.addView(new View(this), new LinearLayout.LayoutParams(1, dp(h)));
     }
-    private TextView text(String value, int size, int color, boolean bold) {
-        TextView view = new TextView(this);
-        view.setText(value); view.setTextColor(color); view.setTextSize(size);
-        if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        view.setLineSpacing(dp(2), 1.0f); return view;
+    private TextView label(String value, int size, int color, boolean bold) {
+        TextView t = new TextView(this); t.setText(value); t.setTextSize(size);
+        t.setTextColor(color); t.setLineSpacing(dp(3), 1.0f);
+        if (bold) t.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        return t;
     }
-    private void addText(LinearLayout parent, String value, int size, int color, boolean bold) {
-        parent.addView(text(value, size, color, bold));
+    private LinearLayout card(LinearLayout root) {
+        LinearLayout l = column();
+        l.setPadding(dp(20), dp(20), dp(20), dp(20));
+        l.setBackground(shape(PANEL, 19));
+        root.addView(l, new LinearLayout.LayoutParams(-1, -2));
+        return l;
     }
-    private Button button(String title, boolean primary, Runnable action) {
-        Button b = new Button(this);
-        b.setText(title); b.setTextSize(14); b.setAllCaps(false);
-        b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        b.setTextColor(primary ? BG : TEXT);
-        b.setBackground(shape(primary ? ACCENT : SURFACE_LIGHT, 14));
-        b.setMinimumHeight(dp(54));
-        b.setPadding(dp(15), dp(11), dp(15), dp(11));
-        b.setOnClickListener(v -> { if (!working) action.run(); });
+    private void title(LinearLayout root, String headline, String subtitle) {
+        root.addView(label(headline, 20, TEXT, true));
+        space(root, 6); root.addView(label(subtitle, 13, MUTED, false)); space(root, 18);
+    }
+    private EditText field(LinearLayout parent, String hint, boolean password) {
+        EditText e = new EditText(this); e.setHint(hint);
+        e.setTextSize(15); e.setSingleLine(true); e.setTextColor(TEXT);
+        e.setHintTextColor(MUTED);
+        e.setInputType(password ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD
+            : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        e.setPadding(dp(15), 0, dp(15), 0);
+        e.setBackground(shape(FIELD, 12));
+        parent.addView(e, new LinearLayout.LayoutParams(-1, dp(53)));
+        return e;
+    }
+    private Button button(LinearLayout root, String text, boolean accent, Runnable onClick) {
+        Button b = new Button(this); b.setText(text); b.setAllCaps(false);
+        b.setTextSize(14); b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        b.setTextColor(accent ? BG : TEXT);
+        b.setBackground(shape(accent ? ACCENT : FIELD, 12));
+        b.setOnClickListener(v -> { if (!working) onClick.run(); });
+        root.addView(b, new LinearLayout.LayoutParams(-1, dp(54)));
         return b;
     }
-    private void fullButton(LinearLayout parent, String title, boolean primary, Runnable action) {
-        parent.addView(button(title, primary, action), new LinearLayout.LayoutParams(-1, dp(54)));
-    }
-    private EditText input(LinearLayout parent, String hint, boolean password) {
-        EditText edit = new EditText(this);
-        edit.setTextSize(15); edit.setSingleLine(true); edit.setTextColor(TEXT);
-        edit.setHintTextColor(MUTED); edit.setHint(hint);
-        edit.setInputType(password ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD
-            : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        edit.setPadding(dp(15), dp(8), dp(15), dp(8));
-        edit.setBackground(shape(SURFACE_LIGHT, 12));
-        parent.addView(edit, new LinearLayout.LayoutParams(-1, dp(52)));
-        return edit;
-    }
-    private LinearLayout card(LinearLayout parent) {
-        LinearLayout box = vertical(); box.setPadding(dp(18), dp(18), dp(18), dp(18));
-        box.setBackground(outline());
-        parent.addView(box, new LinearLayout.LayoutParams(-1, -2));
-        return box;
-    }
-    private void section(LinearLayout parent, String heading, String caption) {
-        addText(parent, heading, 18, TEXT, true); gap(parent, 6);
-        addText(parent, caption, 13, MUTED, false); gap(parent, 18);
-    }
     private void render() {
+        lastCodeStep = -1;
+        codeText = null; codeTimer = null; vsStatus = null;
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true); scroll.setBackgroundColor(BG);
-        LinearLayout root = vertical();
-        root.setPadding(dp(22), dp(36), dp(22), dp(42));
+        LinearLayout root = column();
+        root.setPadding(dp(23), dp(34), dp(23), dp(42));
         scroll.addView(root); setContentView(scroll);
-        TextView brand = text("V", 29, Color.WHITE, true);
-        brand.setGravity(Gravity.CENTER);
-        brand.setBackground(shape(ACCENT, 19));
-        root.addView(brand, new LinearLayout.LayoutParams(dp(62), dp(62)));
-        gap(root, 19); addText(root, "Vista ID", 32, TEXT, true); gap(root, 5);
-        addText(root, "Uma identidade. Todo o ecossistema Vista.", 14, MUTED, false);
-        gap(root, 24);
-        if (sessionId == null) drawWelcome(root); else drawDashboard(root);
-        gap(root, 28);
-        addText(root, "VISTA ID 0.1 · PRÉ-VISUALIZAÇÃO LOCAL", 10, MUTED, true);
+        TextView mark = label("V", 30, Color.WHITE, true);
+        mark.setBackground(shape(ACCENT, 18)); mark.setGravity(Gravity.CENTER);
+        root.addView(mark, new LinearLayout.LayoutParams(dp(60), dp(60)));
+        space(root, 17);
+        root.addView(label("Vista ID", 32, TEXT, true));
+        space(root, 5);
+        root.addView(label("Uma conta. Todos os teus apps Vista.", 14, MUTED, false));
+        space(root, 26);
+        if (!SupabaseGateway.configured()) {
+            LinearLayout box = card(root);
+            title(box, "Ligar ao Supabase", "Este APK ainda não recebeu a URL e a chave pública do projeto Supabase. Nenhum login é simulado.");
+            box.addView(label("Configura os secrets VISTA_SUPABASE_URL e VISTA_SUPABASE_PUBLISHABLE_KEY no GitHub, aplica a migração SQL e publica a Edge Function vista-auth.", 13, MUTED, false));
+        } else if (!authenticated) {
+            loginUi(root);
+        } else {
+            dashboardUi(root);
+        }
+        space(root, 28);
+        root.addView(label("VISTA ID · SUPABASE AUTH", 11, MUTED, true));
     }
-    private void drawWelcome(LinearLayout root) {
-        LinearLayout info = card(root);
-        addText(info, "MODO LOCAL ATIVO", 13, ACCENT, true);
-        gap(info, 9);
-        addText(info, "Podes criar um perfil neste dispositivo sem internet. Ainda não existe um servidor Vista Cloud ativo: o código NÃO faz login noutros dispositivos.", 13, MUTED, false);
-        gap(root, 22);
-        LinearLayout switcher = new LinearLayout(this);
-        Button create = button("Criar conta", creating, () -> { creating = true; render(); });
-        Button signIn = button("Entrar", !creating, () -> { creating = false; render(); });
-        LinearLayout.LayoutParams a = new LinearLayout.LayoutParams(0, dp(50), 1);
-        LinearLayout.LayoutParams b = new LinearLayout.LayoutParams(0, dp(50), 1); b.leftMargin = dp(9);
-        switcher.addView(create, a); switcher.addView(signIn, b);
-        root.addView(switcher); gap(root, 18);
+    private void loginUi(LinearLayout root) {
+        LinearLayout tabs = column();
+        button(tabs, creating ? "Já tenho conta · Entrar" : "Ainda não tenho conta · Criar Vista ID",
+            false, () -> { creating = !creating; render(); });
+        root.addView(tabs); space(root, 18);
         LinearLayout form = card(root);
+        title(form, creating ? "Criar a tua identidade" : "Bem-vindo de volta",
+            creating ? "O nome de utilizador será único em todos os apps Vista." :
+            "Entra com e-mail ou nome de utilizador e palavra-passe.");
+        EditText usernameOrEmail = field(form, creating ? "Nome de utilizador" : "E-mail ou nome de utilizador", false);
+        space(form, 12);
+        EditText email = creating ? field(form, "E-mail (não enviamos códigos)", false) : null;
+        if (creating) space(form, 12);
+        EditText password = field(form, "Palavra-passe", true);
+        EditText confirm = null;
+        if (creating) { space(form, 12); confirm = field(form, "Repetir palavra-passe", true); }
+        space(form, 17);
         if (creating) {
-            section(form, "O teu perfil Vista", "Escolhe um nome e uma palavra-passe para o perfil local.");
-            EditText name = input(form, "Nome de perfil", false); gap(form, 11);
-            EditText pass = input(form, "Palavra-passe", true); gap(form, 11);
-            EditText confirm = input(form, "Confirmar palavra-passe", true); gap(form, 13);
-            addText(form, "8+ caracteres com maiúscula, minúscula, número e símbolo.", 12, MUTED, false);
-            gap(form, 20);
-            fullButton(form, "Criar Vista ID local", true, () -> {
-                String n = name.getText().toString(), p = pass.getText().toString();
-                if (!p.equals(confirm.getText().toString())) { toast("As palavras-passe não coincidem."); return; }
-                execute(() -> store.register(n, p), account -> {
-                    persistSession(account.optString("id"));
-                    toast("Perfil local criado. Guarda uma cópia de segurança!");
-                });
+            form.addView(label("Mínimo de 10 caracteres. Sem códigos por e-mail; guarda a tua palavra-passe, pois a recuperação automática não está ativa.", 12, MUTED, false));
+            space(form, 16);
+            final EditText check = confirm;
+            button(form, "Criar Vista ID", true, () -> {
+                String pw = password.getText().toString();
+                if (!pw.equals(check.getText().toString())) { toast("As palavras-passe não coincidem."); return; }
+                execute(() -> gateway.register(email.getText().toString(),
+                    usernameOrEmail.getText().toString(), pw), result -> signedIn());
             });
         } else {
-            section(form, "Bem-vindo de volta", "Inicia sessão num perfil guardado neste dispositivo.");
-            EditText id = input(form, "Vista ID · 13 caracteres", false); gap(form, 11);
-            EditText pass = input(form, "Palavra-passe", true); gap(form, 20);
-            fullButton(form, "Entrar no perfil", true, () -> execute(() -> {
-                JSONObject account = store.authenticate(id.getText().toString(), pass.getText().toString());
-                if (account == null) throw new Exception("Código ou palavra-passe incorretos neste dispositivo.");
-                return account;
-            }, account -> persistSession(account.optString("id"))));
+            button(form, "Entrar com segurança", true, () ->
+                execute(() -> gateway.login(usernameOrEmail.getText().toString(),
+                    password.getText().toString()), result -> signedIn()));
         }
-        gap(root, 14);
-        fullButton(root, "Restaurar cópia de segurança", false, this::askImportPassword);
     }
-    private void drawDashboard(LinearLayout root) {
-        final JSONObject account;
-        try { account = store.find(sessionId); }
-        catch (Exception e) { toast("Erro ao abrir perfil."); return; }
-        if (account == null) { persistSession(null); return; }
-        LinearLayout profile = card(root);
-        addText(profile, "PERFIL LOCAL", 12, ACCENT, true); gap(profile, 8);
-        addText(profile, "Olá, " + account.optString("name"), 24, TEXT, true);
-        gap(profile, 18);
-        addText(profile, "O TEU VISTA ID", 12, MUTED, true); gap(profile, 6);
-        String id = account.optString("id");
-        addText(profile, VistaIdStore.displayId(id), 20, TEXT, true); gap(profile, 16);
-        fullButton(profile, "Copiar código", false, () -> {
-            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-            cm.setPrimaryClip(ClipData.newPlainText("Vista ID", id)); toast("Código copiado.");
+    private void signedIn() {
+        authenticated = true;
+        creating = false; lastCodeStep = -1; profile = null; username = "";
+        render(); refreshProfile();
+    }
+    private void dashboardUi(LinearLayout root) {
+        LinearLayout overview = card(root);
+        overview.addView(label("A TUA IDENTIDADE", 12, ACCENT, true)); space(overview, 9);
+        overview.addView(label(username.isEmpty() ? "Conta Vista" : "@" + username, 25, TEXT, true));
+        space(overview, 11);
+        overview.addView(label("Sessão protegida pelo Supabase Auth. A tua palavra-passe nunca é guardada pelo Vista ID.", 13, MUTED, false));
+        space(overview, 16);
+        button(overview, "Editar nome apresentado", false, this::editDisplayName);
+        space(overview, 9);
+        button(overview, "Alterar palavra-passe", false, this::editPassword);
+        space(overview, 9);
+        button(overview, "Atualizar perfil", false, this::refreshProfile);
+        space(root, 16);
+
+        LinearLayout connected = card(root);
+        connected.addView(label("APLICAÇÕES VISTA", 12, ACCENT, true));
+        space(connected, 12);
+        connected.addView(label("VistaStream", 22, TEXT, true));
+        space(connected, 6);
+        vsStatus = label("A verificar ligação...", 13, MUTED, false);
+        connected.addView(vsStatus); space(connected, 16);
+        button(connected, "Gerir conta e ver dados do VS", true, this::showVsData);
+        space(connected, 9);
+        button(connected, "Limpar dados sincronizados do VS", false, this::confirmResetVs);
+        space(root, 16);
+
+        LinearLayout authenticator = card(root);
+        title(authenticator, "Autenticador Vista", "Código de 8 caracteres, renovado a cada 30 segundos. Introduz com o teu nome de utilizador no VS.");
+        codeText = label("A sincronizar...", 29, SUCCESS, true);
+        codeText.setGravity(Gravity.CENTER);
+        authenticator.addView(codeText);
+        space(authenticator, 5);
+        codeTimer = label("Renova em 30 s", 13, MUTED, false);
+        codeTimer.setGravity(Gravity.CENTER);
+        authenticator.addView(codeTimer);
+        space(authenticator, 16);
+        button(authenticator, "Ler QR Code da televisão", true, this::scanQr);
+        space(authenticator, 10);
+        authenticator.addView(label("Confirma sempre que o código apresentado na televisão é igual ao código da aprovação. Nunca aproves pedidos desconhecidos.", 12, MUTED, false));
+        space(root, 18);
+
+        button(root, "Terminar sessão", false, () -> execute(() -> {
+            gateway.logout(); return new JSONObject();
+        }, unused -> { authenticated = false; username = ""; profile = null; lastCodeStep = -1; render(); }));
+        refreshVsStatus();
+    }
+    private void refreshProfile() {
+        execute(() -> gateway.profile(), data -> {
+            profile = data;
+            username = data.optString("username", "");
+            render();
         });
-        gap(root, 16);
-        LinearLayout sync = card(root);
-        section(sync, "Sincronização cloud", "A futura conta universal ligará VistaStream, VistaBrowser, VistaTube, VistaMusic e VistaLauncher.");
-        addText(sync, "Ainda não disponível nesta versão local. Não existe sincronização ou recuperação online.", 13, ACCENT, false);
-        gap(root, 16);
-        LinearLayout backup = card(root);
-        section(backup, "Protege o teu perfil", "Exporta um JSON encriptado com AES-GCM. Precisarás da palavra-passe para importar o ficheiro.");
-        fullButton(backup, "Exportar backup encriptado", true, () -> askExportPassword(id));
-        gap(root, 16);
-        fullButton(root, "Terminar sessão", false, () -> persistSession(null));
     }
-    private void persistSession(String id) {
-        sessionId = id;
-        getPreferences(MODE_PRIVATE).edit().putString("session", id).apply();
-        creating = false; render();
+    private void refreshVsStatus() {
+        TextView current = vsStatus;
+        if (current == null) return;
+        new Thread(() -> {
+            try {
+                JSONObject data = gateway.vistaStreamData();
+                String state = data.isNull("connected_at") || data.optString("connected_at").isEmpty()
+                    ? "Disponível para ligar ao VistaStream"
+                    : "Conectado · última ligação " + data.optString("connected_at", "").replace("T", " ").replace("Z", " UTC");
+                runOnUiThread(() -> { if (vsStatus == current) current.setText(state); });
+            } catch (Exception e) {
+                runOnUiThread(() -> { if (vsStatus == current) current.setText("Não foi possível consultar o VS"); });
+            }
+        }, "VistaID-VSStatus").start();
     }
-    private void askExportPassword(String id) {
-        passwordDialog("Confirmar palavra-passe", "Confirma a palavra-passe para gerar um backup encriptado.", pass ->
-            execute(() -> {
-                JSONObject account = store.authenticate(id, pass);
-                if (account == null) throw new Exception("Palavra-passe incorreta.");
-                return account;
-            }, account -> {
-                pendingPassword = pass; pendingId = id;
-                Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-                intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType("application/json");
-                intent.putExtra(Intent.EXTRA_TITLE, "vistaid-" + id + ".json");
-                startActivityForResult(intent, CREATE_BACKUP);
-            }));
+    private void editDisplayName() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setText(profile == null ? username : profile.optString("display_name", username));
+        new AlertDialog.Builder(this).setTitle("Nome apresentado")
+            .setMessage("O teu @nome de utilizador continua igual.")
+            .setView(input).setNegativeButton("Cancelar", null)
+            .setPositiveButton("Guardar", (d, which) ->
+                execute(() -> gateway.action("profile_update",
+                    new JSONObject().put("display_name", input.getText().toString()), true),
+                    result -> refreshProfile())).show();
     }
-    private void askImportPassword() {
-        passwordDialog("Restaurar perfil", "Introduz a palavra-passe utilizada na criação do backup.", pass -> {
-            pendingPassword = pass;
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("*/*");
-            startActivityForResult(intent, RESTORE_BACKUP);
-        });
+    private void editPassword() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        input.setHint("Nova palavra-passe (10+ caracteres)");
+        new AlertDialog.Builder(this).setTitle("Alterar palavra-passe")
+            .setView(input).setNegativeButton("Cancelar", null)
+            .setPositiveButton("Guardar", (d, which) ->
+                execute(() -> {
+                    gateway.changePassword(input.getText().toString());
+                    return new JSONObject();
+                }, result -> toast("Palavra-passe atualizada."))).show();
     }
-    private void passwordDialog(String title, String caption, Consumer<String> done) {
-        EditText edit = new EditText(this);
-        edit.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        edit.setHint("Palavra-passe");
-        LinearLayout wrapper = vertical(); wrapper.setPadding(dp(24), dp(8), dp(24), 0);
-        wrapper.addView(edit);
-        new AlertDialog.Builder(this).setTitle(title).setMessage(caption).setView(wrapper)
+    private void confirmResetVs() {
+        new AlertDialog.Builder(this).setTitle("Eliminar dados do VistaStream?")
+            .setMessage("Esta ação elimina favoritos, progresso e preferências sincronizadas na nuvem. Não apaga os dados locais que ainda não foram sincronizados. Não pode ser desfeita.")
             .setNegativeButton("Cancelar", null)
-            .setPositiveButton("Continuar", (d, w) -> {
-                String pass = edit.getText().toString();
-                if (pass.isEmpty()) toast("Indica a palavra-passe."); else done.accept(pass);
-            }).show();
+            .setPositiveButton("Eliminar dados", (d, which) -> execute(
+                () -> gateway.action("vs_reset",
+                    new JSONObject().put("confirm", "DELETE_MY_VS_DATA"), true),
+                result -> { toast("Dados do VistaStream limpos."); refreshVsStatus(); }))
+            .show();
     }
-    @Override protected void onActivityResult(int req, int res, Intent data) {
-        super.onActivityResult(req, res, data);
-        if (res != RESULT_OK || data == null || data.getData() == null) {
-            pendingPassword = null; pendingId = null; return;
-        }
-        Uri uri = data.getData();
-        String secret = pendingPassword, id = pendingId;
-        pendingPassword = null; pendingId = null;
-        if (secret == null) return;
-        if (req == CREATE_BACKUP) {
-            execute(() -> {
-                JSONObject account = store.authenticate(id, secret);
-                if (account == null) throw new Exception("Sessão inválida. Tenta novamente.");
-                byte[] content = BackupCodec.exportAccount(account, secret);
-                try (OutputStream out = getContentResolver().openOutputStream(uri, "w")) {
-                    if (out == null) throw new Exception("Não foi possível escrever o ficheiro.");
-                    out.write(content); out.flush();
-                }
-                return account;
-            }, acc -> toast("Backup encriptado guardado."));
-        } else if (req == RESTORE_BACKUP) {
-            execute(() -> {
-                byte[] dataBytes;
-                try (InputStream in = getContentResolver().openInputStream(uri);
-                     ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-                    if (in == null) throw new Exception("Não foi possível ler o ficheiro.");
-                    byte[] buf = new byte[4096]; int n, count = 0;
-                    while ((n = in.read(buf)) != -1) {
-                        count += n;
-                        if (count > 512_000) throw new Exception("Backup demasiado grande.");
-                        out.write(buf, 0, n);
-                    }
-                    dataBytes = out.toByteArray();
-                }
-                JSONObject account = BackupCodec.importAccount(dataBytes, secret);
-                store.importAccount(account);
-                return account;
-            }, acc -> { persistSession(acc.optString("id")); toast("Perfil restaurado."); });
-        }
+    private void showVsData() {
+        execute(() -> gateway.vistaStreamData(), data -> {
+            int favorites = data.optJSONArray("favorites") == null ? 0 : data.optJSONArray("favorites").length();
+            int progress = data.optJSONObject("progress") == null ? 0 : data.optJSONObject("progress").length();
+            String details = "Favoritos: " + favorites + "\n" +
+                "Títulos com progresso: " + progress + "\n" +
+                "Versão dos dados: " + data.optLong("version", 1) + "\n" +
+                "Última atualização: " + data.optString("updated_at", "—") + "\n\n" +
+                "Preferências:\n" + data.optJSONObject("settings") + "\n\n" +
+                "Para sincronizar o histórico, o VistaStream utilizará esta conta com as mesmas políticas RLS.";
+            new AlertDialog.Builder(this).setTitle("Dados · VistaStream")
+                .setMessage(details).setPositiveButton("Fechar", null).show();
+        });
     }
-    private void execute(Callable<JSONObject> job, Consumer<JSONObject> success) {
+    private void scanQr() {
+        new IntentIntegrator(this)
+            .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+            .setPrompt("Lê o QR Code do VistaStream")
+            .setBeepEnabled(false)
+            .setOrientationLocked(false)
+            .initiateScan();
+    }
+    @Override protected void onActivityResult(int req, int result, android.content.Intent data) {
+        IntentResult scan = IntentIntegrator.parseActivityResult(req, result, data);
+        if (scan != null) {
+            if (scan.getContents() != null) reviewQr(scan.getContents());
+            return;
+        }
+        super.onActivityResult(req, result, data);
+    }
+    private void reviewQr(String raw) {
+        Uri uri;
+        try { uri = Uri.parse(raw); } catch (Exception e) { toast("QR inválido"); return; }
+        if (!"vistaid".equals(uri.getScheme()) || !"pair".equals(uri.getHost())) {
+            toast("Este QR não pertence ao Vista ID."); return;
+        }
+        String id = uri.getQueryParameter("request");
+        if (id == null || !id.matches("[0-9a-fA-F-]{36}")) { toast("Pedido inválido"); return; }
+        execute(() -> gateway.action("pair_details", new JSONObject().put("request_id", id), false), details -> {
+            if (!"vs".equals(details.optString("app_id"))) { toast("Aplicação desconhecida."); return; }
+            new AlertDialog.Builder(this)
+                .setTitle("Autorizar VistaStream?")
+                .setMessage("Confirma que a tua televisão mostra este código:\n\n"
+                    + details.optString("verification_code") +
+                    "\n\nA sessão será ligada à tua conta Vista ID.")
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Autorizar ligação", (d, which) ->
+                    execute(() -> gateway.action("pair_approve",
+                        new JSONObject().put("request_id", id), true),
+                        response -> {
+                            toast("VistaStream autorizado com sucesso.");
+                            refreshVsStatus();
+                        })).show();
+        });
+    }
+    private void execute(Callable<JSONObject> task, Consumer<JSONObject> done) {
         if (working) return;
         working = true;
         new Thread(() -> {
             try {
-                JSONObject result = job.call();
-                runOnUiThread(() -> { working = false; success.accept(result); });
+                JSONObject result = task.call();
+                runOnUiThread(() -> {
+                    working = false;
+                    if (!isFinishing()) done.accept(result);
+                });
             } catch (Exception e) {
-                runOnUiThread(() -> { working = false; toast(e.getMessage() == null ? "Operação não concluída." : e.getMessage()); });
+                runOnUiThread(() -> {
+                    working = false;
+                    if (!isFinishing()) new AlertDialog.Builder(this)
+                        .setTitle("Não foi possível concluir")
+                        .setMessage(e.getMessage() == null ? "Verifica a ligação e tenta novamente." : e.getMessage())
+                        .setPositiveButton("OK", null).show();
+                });
             }
-        }, "VistaId-IO").start();
+        }, "VistaID-Network").start();
     }
-    private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_LONG).show(); }
+    private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
 }
