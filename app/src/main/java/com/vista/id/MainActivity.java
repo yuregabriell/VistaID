@@ -63,7 +63,7 @@ public final class MainActivity extends Activity {
                             String value = current.getString("code");
                             runOnUiThread(() -> {
                                 codeLoading = false;
-                                lastCodeStep = System.currentTimeMillis() / 30000;
+                                lastCodeStep = current.optLong("expires_at", (System.currentTimeMillis() / 1000 + 30)) / 30 - 1;
                                 if (codeText != null) codeText.setText(value);
                             });
                         } catch (Exception e) {
