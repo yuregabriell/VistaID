@@ -1,0 +1,1 @@
+create index if not exists vid_device_pairings_approved_user_idx on public.vid_device_pairings(approved_user) where approved_user is not null;
