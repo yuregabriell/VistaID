@@ -1,5 +1,11 @@
 plugins { id("com.android.application") }
 
+val vistaSupabaseUrl = providers.gradleProperty("VISTA_SUPABASE_URL").orNull
+    ?: System.getenv("VISTA_SUPABASE_URL") ?: ""
+val vistaSupabaseKey = providers.gradleProperty("VISTA_SUPABASE_PUBLISHABLE_KEY").orNull
+    ?: System.getenv("VISTA_SUPABASE_PUBLISHABLE_KEY") ?: ""
+fun javaLiteral(s: String): String = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
 android {
     namespace = "com.vista.id"
     compileSdk = 35
@@ -7,12 +13,19 @@ android {
         applicationId = "com.vista.id"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0-local"
+        versionCode = 3
+        versionName = "0.3.0-supabase-preview"
+        buildConfigField("String", "VISTA_SUPABASE_URL", javaLiteral(vistaSupabaseUrl))
+        buildConfigField("String", "VISTA_SUPABASE_PUBLISHABLE_KEY", javaLiteral(vistaSupabaseKey))
     }
+    buildFeatures { buildConfig = true }
     buildTypes { release { isMinifyEnabled = false } }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+dependencies {
+    // Camera QR scanner runs locally; no cloud OCR or login provider.
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }
