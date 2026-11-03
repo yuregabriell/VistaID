@@ -1,9 +1,11 @@
 plugins { id("com.android.application") }
 
-val vistaSupabaseUrl = providers.gradleProperty("VISTA_SUPABASE_URL").orNull
-    ?: System.getenv("VISTA_SUPABASE_URL") ?: "https://hleekwlptmisfvamgext.supabase.co"
-val vistaSupabaseKey = providers.gradleProperty("VISTA_SUPABASE_PUBLISHABLE_KEY").orNull
-    ?: System.getenv("VISTA_SUPABASE_PUBLISHABLE_KEY") ?: "sb_publishable_7H5NVq8e6_6aNsgU8p7S-A_lBdiLspn"
+val vistaSupabaseUrl = providers.gradleProperty("VISTA_SUPABASE_URL").orNull?.takeIf { it.isNotBlank() }
+    ?: System.getenv("VISTA_SUPABASE_URL")?.takeIf { it.isNotBlank() }
+    ?: "https://hleekwlptmisfvamgext.supabase.co"
+val vistaSupabaseKey = providers.gradleProperty("VISTA_SUPABASE_PUBLISHABLE_KEY").orNull?.takeIf { it.isNotBlank() }
+    ?: System.getenv("VISTA_SUPABASE_PUBLISHABLE_KEY")?.takeIf { it.isNotBlank() }
+    ?: "sb_publishable_7H5NVq8e6_6aNsgU8p7S-A_lBdiLspn"
 fun javaLiteral(s: String): String = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 android {
