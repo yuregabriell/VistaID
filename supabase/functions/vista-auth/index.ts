@@ -51,7 +51,11 @@ async function limit(req: Request, action: string, identity: string) {
   // Both limits use atomic PostgreSQL updates; never rely solely on the client.
   const ip = req.headers.get("cf-connecting-ip") ??
     req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0] ?? "unknown";
-  for (const [value, max] of [[`ip:${ip}:${action}`, 80], [`id:${identity}:${action}`, action === "pair_redeem" ? 35 : 8]] as const) {
+  const buckets: Array<[string, number]> = action === "pair_create"
+    ? [[`ip:${ip}:${action}`, 10]]
+    : [[`ip:${ip}:${action}`, 80],
+       [`id:${identity}:${action}`, action === "pair_redeem" ? 35 : 8]];
+  for (const [value, max] of buckets) {
     const key = await sha256(value);
     const { data, error } = await admin.rpc("vid_limit_attempt", { p_key: key, p_max: max });
     if (error || data !== true) return false;
@@ -161,6 +165,7 @@ Deno.serve(async (req) => {
     }
     if (action === "pair_details") {
       if (!validUuid(body.request_id)) return fail(400, "QR inválido");
+      if (!(await limit(req, "pair_details", String(body.request_id)))) return fail(429, "Demasiadas tentativas");
       const { data } = await admin.from("vid_device_pairings")
         .select("app_id,status,verification_code,expires_at")
         .eq("id", body.request_id).maybeSingle();
@@ -173,6 +178,7 @@ Deno.serve(async (req) => {
       const user = await getSignedInUser(req);
       if (!user?.email) return fail(401, "Inicia sessão primeiro");
       if (!validUuid(body.request_id)) return fail(400, "Pedido inválido");
+      if (!(await limit(req, "pair_approve", user.id))) return fail(429, "Demasiadas tentativas");
       const { data: pair } = await admin.from("vid_device_pairings")
         .select("app_id,status,expires_at").eq("id", body.request_id).maybeSingle();
       if (!pair || pair.app_id !== "vs" || pair.status !== "pending" ||
