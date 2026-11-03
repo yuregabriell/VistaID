@@ -1,46 +1,11 @@
-# Vista ID — ligação local e preservação de memória
+# Migração dos perfis locais anteriores (v0.2)
 
-Estado: `v0.2.0-local`, **não é autenticação cloud**.
+A ligação local por identificador de 13 caracteres foi **removida da aplicação Android**. Não confundir os códigos de backups locais com a nova identidade de autenticação do Supabase.
 
-## Integração atual
+- Um perfil local antigo não se torna uma conta Supabase automaticamente. Os identificadores antigos não são únicos globalmente, portanto não podem ser utilizados como identidade de login do VS.
+- Os backups `vistaid-encrypted-backup` da versão antiga contêm verificadores de palavra-passe e não devem ser enviados para o Supabase ou para uma API pública. A nova aplicação não aceita nem exporta esses backups.
+- Utilizadores existentes devem criar uma conta Supabase nova e preservar os dados antigos na instalação anterior até existir uma ferramenta explícita de migração de favoritos/histórico, nunca de senhas.
+- No VistaStream, migra somente biblioteca, favoritos, preferências e progresso depois de autenticar a conta nova, com revisão de conflitos e consentimento. A reprodução continua possível sem conta.
+- Não eliminar instalações ou cópias locais antigas sem garantir um backup do que ainda não foi migrado.
 
-Os clientes Android suportados fazem `startActivityForResult` com:
-
-```text
-action: com.vista.id.action.LINK_LOCAL_PROFILE
-package: com.vista.id
-```
-
-O Vista ID abre um ecrã próprio para o utilizador inserir ID e palavra-passe.
-Após confirmar a autorização, devolve apenas:
-- `com.vista.id.profile_id`: ID alfanumérico local
-- `com.vista.id.profile_name`: nome de perfil
-- `com.vista.id.mode`: `local`
-
-Não devolve a palavra-passe, o hash, a chave de backup ou qualquer token de sessão.
-A ligação não é uma prova de uma conta online e não permite consultar dados
-de outras aplicações. Cada app mantém a sua base de dados e preferências locais
-sob o sandbox normal do Android.
-
-## Contrato do modo sem conta
-
-- A aplicação funciona sem o Vista ID instalado.
-- Ligar ou desligar a identidade local nunca apaga histórico, favoritos,
-  biblioteca, playlists, fontes, ficheiros ou configurações anteriores.
-- Caches efémeras e buffers do player não são dados de conta nem devem ser
-  exportados para sincronização cloud. Android TV mantém buffer temporário
-  pequeno e não guarda os filmes completos por defeito.
-- Histórico de navegação do browser deve ser opt-in se/quando existir cloud.
-- Até existir servidor seguro, não usar a identidade local para autorização
-  de publicações públicas, playlists sociais ou acesso a dados remotos.
-
-## Próxima fase: serviço cloud
-
-É necessário adicionar HTTPS, registo global de IDs, hashes de password
-no servidor, recuperação, rotação de sessões, acesso por dispositivos,
-consentimento para importar dados locais, sincronização offline-first com
-revisões e resolução explícita de conflitos. A TV deverá poder iniciar
-sessão por pairing temporário, sem digitar passwords com o comando.
-
-Até isso estar operacional, a identidade local não representa uma conta
-verificada nem realiza backup automático entre dispositivos.
+Esta migração precisa de uma rotina própria e de testes; **não está concluída** nesta versão.
