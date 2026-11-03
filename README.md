@@ -18,8 +18,8 @@ Uma identidade central para as aplicações Vista. **VistaStream é a primeira a
 2. Em **Authentication → Sign In / Providers → Email**, ativa a autenticação por e-mail e **desativa Confirm email**. Isto elimina o envio de códigos, **mas torna os e-mails não verificados**. Não atives recuperação por e-mail sem rever previamente este modelo.
 3. Aplica `supabase/migrations/202611030001_vista_identity.sql` no SQL Editor, uma única vez. Requer permissões de proprietário. A criação de conta gera automaticamente `vid_profiles`, `vs_user_data` e um segredo privado de autenticador.
 4. Implanta a Edge Function: `supabase functions deploy vista-auth --no-verify-jwt`. As ações privilegiadas validam o JWT dentro da função. Configura `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_URL` e `SUPABASE_ANON_KEY` somente no servidor (variáveis padrão do Supabase); **nunca coloques a service-role key num APK/GitHub público**.
-5. Em **GitHub → VistaID → Settings → Secrets and variables → Actions**, cria `VISTA_SUPABASE_URL` e `VISTA_SUPABASE_PUBLISHABLE_KEY` com URL e chave pública/anon do projeto. Recompila. Essas duas configurações são públicas por natureza; as RLS protegem os dados.
-6. Compila através do workflow `android-release.yml`. Sem configuração, o APK mostra um painel de configuração, **não uma conta falsa**.
+5. O projeto **Vista Cloud** (`hleekwlptmisfvamgext`) já está configurado como padrão no build com a sua URL e a **publishable key pública**, sem qualquer chave de serviço. Para alterar de projeto, define `VISTA_SUPABASE_URL` e `VISTA_SUPABASE_PUBLISHABLE_KEY` nas configurações do build; o GitHub Actions aceita-os como secrets opcionais.
+6. Compila através do workflow `android-release.yml`. O projeto Vista Cloud já recebeu a migração SQL e a Edge Function `vista-auth` em 3 de novembro de 2026. **Ainda é necessário desativar `Confirm email` no painel Auth** para que novos registos dispensem e-mail; o conector atual não suporta modificar essa opção.
 
 Comandos CLI locais opcionais:
 
