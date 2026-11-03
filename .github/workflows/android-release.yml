@@ -2,12 +2,13 @@ name: Android APK - Vista ID
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: write
 jobs:
   apk:
-    name: Build and publish local preview
+    name: Build Supabase preview
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -28,30 +29,45 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+      - name: Static checks
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path("app/src/main/java/com/vista/id")
+          app=(src/"MainActivity.java").read_text()
+          assert "VistaIdStore" not in app
+          assert "pair_approve" in app and "code_now" in app
+          assert "android.permission.CAMERA" in Path("app/src/main/AndroidManifest.xml").read_text()
+          assert "enable row level security" in Path("supabase/migrations/202611030001_vista_identity.sql").read_text()
+          PY
       - name: Build debug APK
+        env:
+          VISTA_SUPABASE_URL: ${{ secrets.VISTA_SUPABASE_URL }}
+          VISTA_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VISTA_SUPABASE_PUBLISHABLE_KEY }}
         run: gradle --no-daemon :app:assembleDebug
       - name: Prepare release asset
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/VistaID-v0.2.0-local-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/VistaID-v0.3.0-supabase-preview-debug.apk
           cd dist
-          sha256sum VistaID-v0.2.0-local-debug.apk > SHA256SUMS.txt
+          sha256sum VistaID-v0.3.0-supabase-preview-debug.apk > SHA256SUMS.txt
       - name: APK build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VistaID-v0.2.0-local-APK
+          name: VistaID-v0.3.0-supabase-preview-APK
           path: dist/
           retention-days: 30
       - name: Publish GitHub prerelease
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=v0.2.0-local
-          NOTES='Vista ID local preview v0.2: adds explicit user-approved local profile linking for Vista apps, plus local profiles and encrypted JSON backups. Not cloud identity; no cross-device syncing. Debug-signed preview.'
+          TAG=v0.3.0-supabase-preview
+          NOTES='Vista ID v0.3 Supabase setup preview: Auth UI, protected sessions, QR pairing and 30s auth codes; requires configured Supabase URL/key, SQL migration and deployed vista-auth function. VS TV client not yet integrated. Debug-signed preview.'
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/VistaID-v0.2.0-local-debug.apk dist/SHA256SUMS.txt --clobber
+            gh release upload "$TAG" dist/VistaID-v0.3.0-supabase-preview-debug.apk dist/SHA256SUMS.txt --clobber
           else
-            gh release create "$TAG" dist/VistaID-v0.2.0-local-debug.apk dist/SHA256SUMS.txt \
-              --target "${GITHUB_SHA}" --title 'Vista ID v0.1.0 - local preview' \
+            gh release create "$TAG" dist/VistaID-v0.3.0-supabase-preview-debug.apk dist/SHA256SUMS.txt \
+              --target "${GITHUB_SHA}" --title 'Vista ID v0.3.0 - Supabase setup preview' \
               --notes "$NOTES" --prerelease
           fi
