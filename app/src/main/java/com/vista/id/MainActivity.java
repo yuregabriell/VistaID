@@ -41,6 +41,7 @@ public final class MainActivity extends Activity {
     private SupabaseGateway gateway;
     private boolean creating = false;
     private boolean working = false;
+    private boolean authenticated = false;
     private boolean codeLoading = false;
     private long lastCodeStep = -1;
     private String username = "";
@@ -49,7 +50,7 @@ public final class MainActivity extends Activity {
 
     private final Runnable tick = new Runnable() {
         @Override public void run() {
-            if (gateway != null && gateway.signedIn() && codeText != null) {
+            if (gateway != null && authenticated && codeText != null) {
                 long seconds = System.currentTimeMillis() / 1000;
                 if (codeTimer != null) codeTimer.setText("Renova em " + (30 - (seconds % 30)) + " s");
                 long step = seconds / 30;
@@ -82,10 +83,11 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         gateway = new SupabaseGateway(this);
+        authenticated = gateway.signedIn();
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         render();
-        if (gateway.signedIn()) refreshProfile();
+        if (authenticated) refreshProfile();
     }
     @Override protected void onResume() { super.onResume(); handler.removeCallbacks(tick); handler.post(tick); }
     @Override protected void onPause() { handler.removeCallbacks(tick); super.onPause(); }
@@ -159,7 +161,7 @@ public final class MainActivity extends Activity {
             LinearLayout box = card(root);
             title(box, "Ligar ao Supabase", "Este APK ainda não recebeu a URL e a chave pública do projeto Supabase. Nenhum login é simulado.");
             box.addView(label("Configura os secrets VISTA_SUPABASE_URL e VISTA_SUPABASE_PUBLISHABLE_KEY no GitHub, aplica a migração SQL e publica a Edge Function vista-auth.", 13, MUTED, false));
-        } else if (!gateway.signedIn()) {
+        } else if (!authenticated) {
             loginUi(root);
         } else {
             dashboardUi(root);
@@ -201,6 +203,7 @@ public final class MainActivity extends Activity {
         }
     }
     private void signedIn() {
+        authenticated = true;
         creating = false; lastCodeStep = -1; profile = null; username = "";
         render(); refreshProfile();
     }
@@ -247,7 +250,7 @@ public final class MainActivity extends Activity {
 
         button(root, "Terminar sessão", false, () -> execute(() -> {
             gateway.logout(); return new JSONObject();
-        }, unused -> { username = ""; profile = null; lastCodeStep = -1; render(); }));
+        }, unused -> { authenticated = false; username = ""; profile = null; lastCodeStep = -1; render(); }));
         refreshVsStatus();
     }
     private void refreshProfile() {
