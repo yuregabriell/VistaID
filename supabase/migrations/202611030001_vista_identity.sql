@@ -129,11 +129,20 @@ returns text language plpgsql security definer set search_path = ''
 as $$
 declare result_hash text;
 begin
-  update public.vid_device_pairings
-    set status = 'redeemed', login_token_hash = null
+  with claimed as (
+    select id, login_token_hash
+    from public.vid_device_pairings
     where id = p_id and poll_secret_hash = p_secret_hash
       and status = 'approved' and expires_at > now()
-    returning login_token_hash into result_hash;
+    for update
+  ), marked as (
+    update public.vid_device_pairings as p
+    set status = 'redeemed', login_token_hash = null
+    from claimed
+    where p.id = claimed.id
+    returning claimed.login_token_hash
+  )
+  select login_token_hash into result_hash from marked;
   return result_hash;
 end; $$;
 revoke all on function public.vid_redeem_pair(uuid, text) from public, anon, authenticated;
@@ -160,3 +169,5 @@ end; $$;
 drop trigger if exists vid_after_signup on auth.users;
 create trigger vid_after_signup after insert on auth.users
   for each row execute function public.vid_on_user_created();
+
+revoke all on function public.vid_on_user_created() from public, anon, authenticated;
