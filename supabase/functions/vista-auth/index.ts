@@ -71,7 +71,7 @@ async function resolveUser(handle: string) {
 }
 async function issueOtpHash(email: string) {
   // No email is sent: only a one-time Supabase Auth token_hash is generated.
-  const { data, error } = await admin.auth.admin.generateLink({ type: "magiclink", email });
+  const { data, error } = await admin.auth.admin.generateLink({ type: "email", email });
   if (error || !data?.properties?.hashed_token) throw new Error("Could not issue session");
   return data.properties.hashed_token;
 }
@@ -145,7 +145,7 @@ Deno.serve(async (req) => {
       const { data: consumed } = await admin.rpc("vid_consume_step",
         { p_user: account.id, p_step: matched });
       if (!consumed) return fail(401, "Código já utilizado");
-      return reply({ token_hash: await issueOtpHash(account.email), type: "magiclink" });
+      return reply({ token_hash: await issueOtpHash(account.email), type: "email" });
     }
     if (action === "pair_create") {
       if (body.app_id !== "vs") return fail(400, "Aplicação não suportada");
@@ -209,7 +209,7 @@ Deno.serve(async (req) => {
       if (!token_hash) return fail(409, "Pedido já utilizado");
       if (pair.approved_user) await admin.from("vs_user_data")
         .update({ connected_at: new Date().toISOString() }).eq("user_id", pair.approved_user);
-      return reply({ status: "approved", token_hash, type: "magiclink" });
+      return reply({ status: "approved", token_hash, type: "email" });
     }
     return fail(400, "Ação desconhecida");
   } catch (error) {
