@@ -123,6 +123,12 @@ final class SupabaseGateway {
         }
         return session.getString("access_token");
     }
+    void changePassword(String newPassword) throws Exception {
+        if (newPassword.length() < 10 || newPassword.length() > 128)
+            throw new Exception("A palavra-passe deve ter 10 a 128 caracteres.");
+        request("PUT", "/auth/v1/user",
+            new JSONObject().put("password", newPassword), accessToken());
+    }
     void logout() {
         try { request("POST", "/auth/v1/logout", new JSONObject(), accessToken()); }
         catch (Exception ignored) { /* local logout still completes */ }
