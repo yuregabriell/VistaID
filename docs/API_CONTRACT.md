@@ -11,8 +11,8 @@ Backend: Supabase Auth + Edge Function `/functions/v1/vista-auth`. Só `app_id="
 ## Código alfanumérico rotativo (mostrado no Vista ID)
 
 1. Vista ID autenticado envia `{ "action":"code_now" }` com JWT; recebe `{ "code":"ABCDEFGH", "expires_at": 1790000000 }`. O código muda em períodos de 30 segundos. Só utilizar servidor para o segredo HMAC.
-2. VS envia `{ "action":"code_login", "username":"nome", "code":"ABCDEFGH" }` sem JWT. Sucesso: `{ "token_hash":"...", "type":"magiclink" }`. Há rate limit e prevenção de reutilização.
-3. VS envia `POST /auth/v1/verify` com `{ "token_hash":"...", "type":"magiclink" }`, recebe tokens específicos desse dispositivo e guarda-os via Android Keystore.
+2. VS envia `{ "action":"code_login", "username":"nome", "code":"ABCDEFGH" }` sem JWT. Sucesso: `{ "token_hash":"...", "type":"email" }`. Há rate limit e prevenção de reutilização.
+3. VS envia `POST /auth/v1/verify` com `{ "token_hash":"...", "type":"email" }`, recebe tokens específicos desse dispositivo e guarda-os via Android Keystore.
 4. A solicitação deve ser executada apenas quando o utilizador confirmar a tentativa de login no VS. Não guardar o código, não anexá-lo a logs.
 
 ## QR Code da televisão (sem levar senha ao VS)
@@ -27,7 +27,7 @@ Backend: Supabase Auth + Edge Function `/functions/v1/vista-auth`. Só `app_id="
 3. Vista ID lê QR, consulta `{ "action":"pair_details","request_id":"UUID" }` e mostra o código; o utilizador confirma que a televisão mostra o mesmo.
 4. Vista ID autenticado envia `{ "action":"pair_approve", "request_id":"UUID" }` com bearer JWT.
 5. VS consulta `{ "action":"pair_redeem","request_id":"UUID","poll_secret":"SEGREDO_ALEATORIO" }` a cada 4–5 s, até aprovação ou expiração. Antes da aprovação recebe `{"status":"pending"}`.
-6. Quando aprovado, recebe `{ "status":"approved","token_hash":"...","type":"magiclink" }` **uma única vez**, e troca `token_hash` no `/auth/v1/verify` para criar sessão própria na TV.
+6. Quando aprovado, recebe `{ "status":"approved","token_hash":"...","type":"email" }` **uma única vez**, e troca `token_hash` no `/auth/v1/verify` para criar sessão própria na TV.
 
 As funções `code_login`, `username_password`, `pair_create`, `pair_details`, `pair_redeem` são públicas e aplicam validações/rate limit. `pair_approve`, `code_now`, `profile_update`, `vs_reset` exigem um JWT autenticado válido.
 
