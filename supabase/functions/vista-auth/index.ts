@@ -108,6 +108,14 @@ Deno.serve(async (req) => {
       if (error) throw error;
       return reply({ updated: true, display_name: displayName });
     }
+    if (action === "vs_connected") {
+      const user = await getSignedInUser(req);
+      if (!user) return fail(401, "Inicia sessão primeiro");
+      const { error } = await admin.from("vs_user_data")
+        .update({ connected_at: new Date().toISOString() }).eq("user_id", user.id);
+      if (error) throw error;
+      return reply({ connected: true, app_id: "vs" });
+    }
     if (action === "vs_reset") {
       const user = await getSignedInUser(req);
       if (!user) return fail(401, "Inicia sessão primeiro");
