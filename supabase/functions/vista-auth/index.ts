@@ -51,7 +51,7 @@ async function limit(req: Request, action: string, identity: string) {
   // Both limits use atomic PostgreSQL updates; never rely solely on the client.
   const ip = req.headers.get("cf-connecting-ip") ??
     req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0] ?? "unknown";
-  for (const [value, max] of [[`ip:${ip}:${action}`, 40], [`id:${identity}:${action}`, 8]] as const) {
+  for (const [value, max] of [[`ip:${ip}:${action}`, 80], [`id:${identity}:${action}`, action === "pair_redeem" ? 35 : 8]] as const) {
     const key = await sha256(value);
     const { data, error } = await admin.rpc("vid_limit_attempt", { p_key: key, p_max: max });
     if (error || data !== true) return false;
@@ -92,6 +92,26 @@ Deno.serve(async (req) => {
       const { data, error } = await client.auth.signInWithPassword({ email: account.email, password });
       if (error || !data.session) return fail(401, "Credenciais inválidas");
       return reply(data.session);
+    }
+    if (action === "profile_update") {
+      const user = await getSignedInUser(req);
+      if (!user) return fail(401, "Inicia sessão primeiro");
+      const displayName = typeof body.display_name === "string" ? body.display_name.trim() : "";
+      if (displayName.length < 2 || displayName.length > 60)
+        return fail(400, "Nome deve ter entre 2 e 60 caracteres");
+      const { error } = await admin.from("vid_profiles")
+        .update({ display_name: displayName }).eq("user_id", user.id);
+      if (error) throw error;
+      return reply({ updated: true, display_name: displayName });
+    }
+    if (action === "vs_reset") {
+      const user = await getSignedInUser(req);
+      if (!user) return fail(401, "Inicia sessão primeiro");
+      if (body.confirm !== "DELETE_MY_VS_DATA") return fail(400, "Confirmação obrigatória");
+      const { error } = await admin.from("vs_user_data")
+        .update({ settings: {}, favorites: [], progress: {} }).eq("user_id", user.id);
+      if (error) throw error;
+      return reply({ reset: true });
     }
     if (action === "code_now") {
       const user = await getSignedInUser(req);
